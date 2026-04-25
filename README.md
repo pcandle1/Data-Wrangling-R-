@@ -21,3 +21,12 @@ I was able to use R to read in many different csv's and create a dataframe to co
 
 ### Greatest hits of Data Wrangling
 
+##### File read in using a list
+![file read](snips/file_read.png)
+
+##### Slicing for plots
+![slicing](snips/slicing.png)
+
+###### Plot examples
+![fertility](snips/fertility.png)
+![migration](snips/net-migration.png)
