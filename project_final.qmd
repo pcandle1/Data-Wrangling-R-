@@ -1,0 +1,721 @@
+---
+title: "Demographics in the World Today"
+subtitle: "Data Science Project"
+author: "Phil Candleana"
+affiliation: "University of Colorado Denver"
+format:
+  html:
+    theme: zephyr
+    page-layout: article
+    toc: true
+editor: visual
+---
+
+# Introduction
+
+Demographics offer a fascinating lens through which to view the world, helping to explain economic, social, and political trends. Many countries are currently experiencing semi-permanent population decline. While this trend may not be inherently negative, it raises important questions about how societies will adapt — particularly in relation to economic growth potential and geopolitical shifts.
+
+In this project, I aim to identify factors that influence population growth both positively and negatively. I will also examine rural and urban populations as key components of a country’s demographic structure. Additionally, I plan to explore slices of the data set that focus on the best - and worst - performing countries in terms of average growth. I will also analyze population trends through the lens of fertility and the replacement rate. My goal is to uncover meaningful patterns and connect them to significant historical or economic events to better understand the forces driving demographic change.
+
+I will subset the data across time periods from 1960 to 2023 and use variables such as current population levels and GDP to identify compelling groupings of countries for deeper analysis. The concept of the replacement fertility rate will serve as a key reference point in this exploration, and I will follow emerging patterns with additional visualizations and statistical techniques.
+
+Ultimately, this project is designed to help anyone interested in understanding how demographic changes are shaping the future. Since the Industrial Revolution — which was well underway by the mid-1800s — the global population has grown exponentially. However, that trend will not continue indefinitely. The demographic transitions ahead will carry profound implications for geopolitics, economic systems, and everyday life — making it all the more essential to study them now.
+
+# Packages Required
+
+These are the packages I used along with base R for the data processing and analysis.
+
+```{r}
+#helps with data cleaning, importing, etc.
+library(dplyr)
+
+#additional packages to help tidy and clean data sets.
+library(tidyr)
+library(tidyverse)
+
+#used for plotting the data
+library(ggplot2)
+library(plotly)
+
+#useful package for plotting side by side for comparison
+library(patchwork)
+
+#themes for more simplistic presentation
+library(ggthemes)
+
+#changing axis labeling easily
+library(scales)
+```
+
+# Data Preparation
+
+The primary source of my data was the [World Bank Databank](https://databank.worldbank.org/home.aspx), specifically the [Health Nutrition and Population Statistics](https://databank.worldbank.org/source/health-nutrition-and-population-statistics). I also used the [World Development Indicators](https://databank.worldbank.org/source/world-development-indicators) to gather GDP information. The Health, Nutrition, and Population database aggregates a wide range of data — including population dynamics, reproductive health, and health financing — from multiple sources. The goal of the World Bank Databank is to support public policy, economic research, and global transparency by providing high-quality, standardized data.
+
+Initially, each data set contained 68 columns, including metadata and one column for each year. The data series were downloaded as separate CSV files, with each file representing a different indicator. These individual files had to be combined into a single, structured data frame for analysis. Notably, the data set used ".." to denote missing values, which required conversion to proper NA values during cleaning.
+
+Here I used a function and lapply to extract all the files in a specific folder. The end result is a list of tibbles that I continued the data transformation on.
+
+```{r}
+data_folder <- "data"
+
+file_names <- list.files(path = data_folder)
+raw_list <- list()
+
+
+extract_files <- function(file_name) {
+    full_path <- file.path(data_folder, file_name)
+    read_csv(full_path, 
+             show_col_types = FALSE)
+  }
+
+
+raw_list <- lapply(file_names, extract_files)
+```
+
+First, I made each tibble in the list longer, by creating a column for Year and having multiple entries for each country. I also used mutate to change the year to a numeric value from a character.
+
+```{r}
+long_list <- list()
+
+for (i in seq_along(raw_list)) {
+  long_list[[i]] <- raw_list[[i]] |>
+    pivot_longer(
+      cols = c(5:68),
+      names_to = "Year",
+      values_to = "Value"
+    ) |>
+    mutate(Year=as.numeric(substr(Year,1,4))
+           )
+}
+```
+
+Now, the name of the "Value" series will be changed to the series name, which was stored in the first column. This is done for each element of the list.
+
+```{r}
+for (i in seq_along(long_list)) {
+  data_name <- long_list[[i]]$'Series Name'[1]
+  long_list[[i]] <- long_list[[i]] |>
+    rename(!!data_name := Value)
+}
+```
+
+Now I dispose of the metadata columns for each tibble in the list.
+
+```{r}
+long_sliced <- list()
+
+for (i in seq_along(long_list)) {
+  long_sliced[[i]] <- long_list[[i]][,-c(1,2,4)]
+}
+```
+
+A step introduced duplicates, but it isn't a difficult fix. Using two keys (Country and Year) to ensure I have the right about of entries.
+
+```{r}
+for (i in seq_along(long_sliced)) {
+  long_sliced[[i]] <- long_sliced[[i]] |>
+    distinct(`Country Name`, Year, .keep_all = TRUE)
+}
+```
+
+Now I can combine the tibbles into a complete data frame. Starting with the first tibble, and then using a for loop to add the rest.
+
+```{r}
+complete_df <- long_sliced[[1]]
+
+for (i in 2:length(long_sliced)) {
+  complete_df <- full_join(
+    complete_df, 
+    long_sliced[[i]], 
+    by = c("Country Name", "Year"))
+}
+```
+
+Changing the ".." to NA.
+
+```{r}
+complete_df[complete_df == ".."] <- NA
+df_clean <- complete_df
+```
+
+The values are still in character form, which won't work for analysis. Changing columns 3 to 25 to numeric in one expression.
+
+```{r}
+df_clean <- df_clean |>
+  mutate(across(3:25, ~as.numeric(.)))
+```
+
+Adding one column to the data frame for analysis.
+
+```{r}
+df_clean <- df_clean |>
+  mutate(`Urban population (% of total population)` = `Urban population` / `Population, total` * 100)
+```
+
+Getting rid of aggregate countries.
+
+```{r}
+country_df <- read_csv("Country List.csv",show_col_types = FALSE)
+country_list <- country_df$`Country Name`
+
+df_clean <- df_clean |>
+  filter(`Country Name` %in% country_list) |>
+  filter(!is.na(`Country Name`))
+```
+
+And here is the final product for analysis. Not all series made an interesting impact, but it was nice to have them just in case.
+
+```{r}
+head(df_clean)
+```
+
+I created several data slices using a repeatable process that I adjusted slightly for different insights. For example, analyzing the average values from just the last 20 years helped highlight top and bottom performers. I also created focused views of high-population countries and those with the highest GDP. Some variables appeared in multiple visualizations to allow deeper exploration of patterns identified during the initial analysis. The following is a table of the variables I created for the analysis.
+
+```{r}
+table_variables <- data_frame(
+  Variable = c("df_avg",
+               "df_top_5",
+               "df_avg_20",
+               "df_top_5_h",
+               "df_bottom_5_h",
+               "df_top_5_20_h",
+               "df_top_5_gdp_20"),
+  Description = c("Average values for each country over the dataset",
+                  "Top 5 of average growth over the dataset",
+                  "Average values for the last 20 years",
+                  "Top 5 of average growth with average population > 10 million",
+                  "Bottom 5 of average growth with average population > 10 million",
+                  "Top 5 of average growth over the last 20 years with average population > 10 million",
+                  "Top 5 of average GDP for the last 20 years")
+)
+table_variables
+```
+
+*The following is some slicing that was required for my exploration and analysis.*
+
+```{r}
+#average the values for all years and arrange descending
+df_avg <- df_clean |>
+  group_by(`Country Name`) |>
+  summarise(across(3:25, ~mean(.x, na.rm = TRUE))) |>
+  arrange(desc(`Population growth (annual %)`))
+
+#a new NA issue to resolve after doing this
+df_avg[df_avg =="NaN"] <- NA
+
+#slicing top and bottom 5
+top_5_growth <- df_avg |>
+  slice_head(n=5)
+top_5_names <- top_5_growth$`Country Name`
+
+#and now filtering the original df_clean to only contain those countries
+df_top_5 <- df_clean |>
+  filter(`Country Name` %in% top_5_names)
+
+#same process for top and bottom 5 from the last 20 years
+
+df_avg_20 <- df_clean |>
+  filter(Year > (max(Year)-20)) |>
+  group_by(`Country Name`) |>
+  summarise(across(3:25, ~mean(.x, na.rm = TRUE)))
+
+#A similar approach with some other restrictions, high population countries (over 10mil) and highest gdp countries.
+
+population_limit <- 10000000
+
+#filtering only populations over 10 mil
+df_avg_highpop<- df_avg |>
+  arrange(desc(`Population, total`)) |>
+  filter(`Population, total` > population_limit)
+
+#arranging list from high to low
+df_avg_highpop <- df_avg_highpop |>
+  arrange(desc(`Population growth (annual %)`))
+
+#slicing top 5
+top_5_growth_h <- df_avg_highpop |>
+  slice_head(n=5)
+top_5_names_h <- top_5_growth_h$`Country Name`
+
+#slicing bottom 5
+bottom_5_growth_h <- df_avg_highpop |>
+  slice_tail(n=5)
+bottom_5_names_h <- bottom_5_growth_h$`Country Name`
+
+#and now filtering the original df_clean to only contain the top 5 and bottom 5
+df_top_5_h <- df_clean |>
+  filter(`Country Name` %in% top_5_names_h)
+
+df_bottom_5_h <- df_clean |>
+  filter(`Country Name` %in% bottom_5_names_h)
+
+#same process for the last 20 years
+
+df_avg_highpop_20 <- df_avg_20 |>
+  arrange(desc(`Population, total`)) |>
+  filter(`Population, total` > population_limit)
+
+top_5_20_growth_h <- df_avg_highpop_20 |>
+  slice_head(n=5)
+top_5_20_names_h <- top_5_20_growth_h$`Country Name`
+
+df_top_5_20_h <- df_clean |>
+  filter(`Country Name` %in% top_5_20_names_h)
+
+#for top gdp countries as well
+top_5_gdp_20 <- df_avg_20 |>
+  arrange(desc(`GDP (current US$)`)) |>
+  slice_head(n=5)
+
+top_5_names_gdp_20 <- top_5_gdp_20$`Country Name`
+
+df_top_5_gdp_20 <- df_clean |>
+  filter(`Country Name` %in% top_5_names_gdp_20)
+```
+
+# Exploratory Data Analysis
+
+## Looking at Factors that Impact Growth Rate
+
+This side-by-side plot compares urban and rural population growth rates as predictors of overall population growth over the past 20 years. The linear trend line for urban growth shows a stronger fit, with a steeper slope and less variance, suggesting that increases in urban population are more closely associated with overall population growth. This implies that, from a policy or planning perspective, stimulating growth in urban areas may be a slightly more effective strategy than focusing on rural regions.
+
+Additionally, the plot reveals that rural growth is substantially negative in many countries, indicating a broader demographic shift from rural to urban living — a trend that aligns with global urbanization patterns.
+
+```{r}
+
+p1 <- ggplot(df_avg_20, aes(x=`Urban population growth (annual %)`,
+                            y=`Population growth (annual %)`)) +
+    geom_point(color="orangered4",
+               alpha=.7,
+               na.rm = TRUE) +
+    geom_smooth(method = "lm",
+                color="black",
+                na.rm = TRUE) +
+    theme_economist() +
+    theme(
+      axis.title.y = element_text(margin = margin(r = 10))
+    )
+  
+  
+p2 <- ggplot(df_avg_20, aes(x=`Rural population growth (annual %)`,
+                            y=`Population growth (annual %)`)) +
+    geom_point(color="slateblue4",
+               alpha=.7,
+               na.rm = TRUE) +
+    geom_smooth(method = "lm",
+                color="black",
+                na.rm = TRUE) +
+    theme_economist() +
+    theme(
+      axis.title.y = element_text(margin = margin(r = 10))
+    )
+
+
+(p1 | p2) +
+  plot_annotation(
+    title="Urban vs Rural Growth to Predict Overall Population Growth"
+  )
+
+```
+
+This set of plots explores how dependent populations influence overall population growth — a timely issue as many countries face aging demographics. The results suggest that a higher proportion of young dependents may support or even encourage population growth, while a greater share of older dependents tends to suppress it. Notably, both scenarios have the potential to reinforce themselves through feedback loops once the trend begins.
+
+The age dependency ratio, used in these plots, represents the percentage of the population considered dependent — typically those under 15 and over 64 — relative to the working-age population.
+
+```{r}
+p1 <- ggplot(df_avg_20, aes(x=`Age dependency ratio, young`,
+                            y=`Population growth (annual %)`)) +
+  geom_point(color="mediumorchid4",
+             alpha=.7,
+             na.rm = TRUE) +
+  geom_smooth(method = "lm",
+              color="black",
+              na.rm = TRUE) +
+  theme_economist() +
+  theme(
+    axis.title.y = element_text(margin = margin(r = 10))
+  )
+
+p2 <- ggplot(df_avg_20, aes(x=`Age dependency ratio, old`,
+                            y=`Population growth (annual %)`)) +
+  geom_point(color="seagreen",
+             alpha=.7,
+             na.rm = TRUE) +
+  geom_smooth(method = "lm",
+              color="black",
+              na.rm = TRUE) +
+  theme_economist() + 
+  theme(
+    axis.title.y = element_text(margin = margin(r = 10))
+  )
+
+(p1 | p2) +
+  plot_annotation(
+    title="Old vs Young dependency Ratios to Predict Population Growth"
+  )
+```
+
+## Looking at Subsets of Growth Over Time
+
+### The Top 5 Growth on Average for the Entire Data Set
+
+This chart highlights the top five countries with the highest average population growth from 1960 to 2023. One notable outlier is Kuwait, where a sharp fluctuation in the data likely reflects the impact of the Iraqi invasion and Operation Desert Storm in the early 1990s. While the individual country trends appear somewhat erratic, they generally converge toward a more stable growth rate of under 5% annually in recent years. Qatar, likely expecting to host a future World Cup event, began rapidly reinvesting natural gas revenue into infrastructure, temporarily boosting population growth.
+
+```{r}
+ggplot(df_top_5, aes(x=Year, 
+                     y=`Population growth (annual %)`, 
+                     col=`Country Name`)) + 
+  geom_line(alpha=.6,
+            linewidth=1.25,
+            na.rm=TRUE) +
+  labs(
+    title="Population Growth Rate Over Time",
+    subtitle="Top 5 Average Population Growth Countries"
+  ) +
+  theme_economist() +
+  theme(
+    legend.title=element_blank(),
+    legend.text=element_text(size=10),
+    axis.title.y = element_text(margin = margin(r = 10))
+  )
+
+```
+
+This shows the overall populations of those same countries, indicating that on the world stage, these are mostly smaller countries.
+
+```{r}
+ggplot(df_top_5, aes(x=Year, 
+                     y=`Population, total`, 
+                     col=`Country Name`)) + 
+  geom_line(alpha=.6,linewidth=1.25) +
+  labs(
+    title="Population Over Time",
+    subtitle="Top 5 Average Population Growth Countries"
+  ) +
+  theme_economist() +
+  theme(
+    legend.title=element_blank(),
+    legend.text=element_text(size=10),
+    axis.title.y = element_text(margin = margin(r = 10))
+  ) +
+  scale_y_continuous(
+    breaks=c(0,1e7,2e7,3e7),
+    labels=c("0","10M","20M","30M")
+  )
+```
+
+### The Top 5 Growth on Average for the Last 20 Years in High Population Countries (Over 10 Million)
+
+This chart displays the countries with the highest average population growth over the past 20 years, offering a more recent perspective. While all countries except China continue to exhibit positive growth rates, each has experienced a noticeable slowdown. The United States shows only a modest decline, whereas China's growth rate has dropped significantly.
+
+Historically, China experienced a sharp decline in mortality during the 1960s under Mao Zedong, which contributed to a population boom. The introduction of the One Child Policy in 1979, combined with accelerating urbanization in the following decades, led to a sustained decline in population growth — a trend that continues today.
+
+```{r}
+ggplot(df_top_5_20_h, aes(x=Year, 
+                          y=`Population growth (annual %)`, 
+                          col=`Country Name`)) + 
+  geom_line(alpha=.6,
+            linewidth=1.25,
+            na.rm=TRUE) +
+  geom_hline(yintercept = 0, 
+             color = "red", 
+             linetype = "dashed", 
+             linewidth = 1) +
+  labs(
+    title="Population Growth Rate Over Time",
+    subtitle="Top 5 Average Population Growth Countries, 20 Years, High Pop"
+  ) +
+  theme_economist() +
+  theme(
+    legend.title=element_blank(),
+    legend.text=element_text(size=12),
+    axis.title.y = element_text(margin = margin(r = 10))
+  )
+```
+
+This chart shows the overall population trends of the same five countries, highlighting the point at which India’s population likely surpassed China’s — estimated between 2021 and 2023. The plot also emphasizes the stark difference in scale between China and India compared to the remaining countries, illustrating their order-of-magnitude lead in global population size.
+
+```{r}
+ggplot(df_top_5_20_h, aes(x=Year, 
+                          y=`Population, total`, 
+                          col=`Country Name`)) +
+  geom_line(alpha=.6,
+            linewidth=1.25,
+            na.rm=TRUE) +
+  labs(
+    title="Population Over Time",
+    subtitle="Top 5 Average Population Growth Countries, 20 Years, High Pop"
+  ) +
+  theme_economist() +
+  theme(
+    legend.title=element_blank(),
+    legend.text=element_text(size=12),
+    axis.title.y = element_text(margin = margin(r = 10))
+  ) +
+  scale_y_continuous(
+    breaks=c(0,5e8,1e9,1.5e9),
+    labels=c("0","500M","1B","1.5B")
+  )
+```
+
+## Looking at Fertility Rate and Replacement
+
+### Fertility Rate of All Countries
+
+One particularly important demographic metric is the replacement fertility rate, typically defined as 2.1 children per woman. This value represents the number of births needed, on average, for each generation to replace itself — with the additional 0.1 accounting for child mortality and other population factors. A fertility rate above 2.1 indicates potential population growth, while a rate below 2.1 suggests that a country's population will begin to decline over time, absent offsetting factors.
+
+```{r}
+ggplot(df_avg_20, aes(x=`Fertility rate, total (births per woman)`)) +
+  geom_histogram(bins=65,
+                 col="black",
+                 fill="turquoise4",
+                 na.rm=TRUE) +
+  geom_vline(xintercept = 2.1, 
+             color = "red", 
+             linetype = "dashed", 
+             linewidth = 1) +
+  labs(
+    title="Fertility Rate of All Countries",
+    subtitle="Average Over Previous 20 Years",
+    y="Frequency"
+  ) +
+  theme_economist() +
+  theme(
+    axis.title.y = element_text(margin = margin(r = 10))
+  )
+```
+
+This scatter plot uses fertility rate as a predictor of population growth rate, providing insight into the relationship between reproductive trends and demographic change. Interactive hover features allow users to identify countries at both ends of the spectrum — those experiencing rapid growth and those facing significant decline.
+
+```{r}
+fert_growth <- ggplot(df_avg_20, aes(x=`Fertility rate, total (births per woman)`,
+                                     y=`Population growth (annual %)`,
+  text=paste("Country:", `Country Name`))) +
+  geom_point(alpha=.6,
+             col="sienna4",
+             na.rm=TRUE) +
+  labs(title="Plot of Fertility Rate predicting Growth Rate") +
+  theme_economist()
+
+
+ggplotly(fert_growth,tooltip="text")
+
+```
+
+### Fertility Rate of the Bottom 5 Growth Countries on Average in High Population Countries (Over 10 Million)
+
+Since much of the earlier analysis focused on lower-population countries, I shifted attention to those with consistently large populations. For this segment, high-population countries are defined as those with an average population exceeding 10 million over the past five years. The plot reveals that all of these countries dropped below the replacement fertility rate prior to 1990 — some even earlier — underscoring a long-term trend of declining birth rates among the world’s most populous nations.
+
+```{r}
+ggplot(df_bottom_5_h, aes(x=Year,
+                          y=`Fertility rate, total (births per woman)`,
+                          col=`Country Name`)) +
+  geom_line(alpha=.6,
+            linewidth = 1.25,
+            na.rm=TRUE) +
+  geom_hline(yintercept = 2.1, 
+             color = "red", 
+             linetype = "dashed", 
+             linewidth = 1) +
+  labs(
+    title="Fertility Rate Over Time",
+    subtitle="Bottom 5 Average Population Growth Countries, 20 Years, High Pop"
+  ) +
+  theme_economist() +
+  theme(
+    legend.title=element_blank(),
+    legend.text=element_text(size=12),
+    axis.title.y = element_text(margin = margin(r = 10))
+  )
+```
+
+Based on fertility trends, we would expect these countries to begin experiencing population decline starting around 1980 — or slightly later, around 1990, in the case of Romania. However, this population plot does not reflect the significant declines we might anticipate, particularly for Germany. Despite falling below the replacement fertility rate decades ago, the data suggests that other factors may be offsetting the expected population loss.
+
+```{r}
+ggplot(df_bottom_5_h, aes(x=Year,
+                          y=`Population, total`,
+                          col=`Country Name`)) +
+         geom_line(alpha=.6,
+                   linewidth = 1.25,
+                   na.rm=TRUE) +
+  labs(
+    title="Population Over Time",
+    subtitle="Bottom 5 Average Population Growth Countries, 20 Years, High Pop"
+  ) +
+  theme_economist() +
+  theme(
+    legend.title=element_blank(),
+    legend.text=element_text(size=12),
+    axis.title.y = element_text(margin = margin(r = 10))
+  ) +
+  scale_y_continuous(
+    breaks=c(0,2e7,4e7,6e7,8e7),
+    labels=c("0","20M","40M","60M","80M")
+  )
+```
+
+This plot displays net migration for the same set of countries. In Germany's case, migration appears to be the key factor sustaining population levels despite consistently low fertility rates. Additionally, we can observe migration spikes across all countries in the plot, likely linked to recent conflicts in Ukraine, which have driven population shifts to varying degrees.
+
+```{r}
+ggplot(df_bottom_5_h, aes(x=Year,
+                          y=`Net migration`,
+                          col=`Country Name`)) +
+         geom_line(alpha=.6,
+                   linewidth = 1.25,
+                   na.rm=TRUE) +
+  labs(
+    title="Net Migration Over Time",
+    subtitle="Bottom 5 Average Population Growth Countries, 20 Years, High Pop"
+  ) +
+  theme_economist() +
+  theme(
+    legend.title=element_blank(),
+    legend.text=element_text(size=12),
+    axis.title.y = element_text(margin = margin(r = 10))
+  ) +
+  scale_y_continuous(
+    breaks=c(-6e6,-4e6,-2e6,0),
+    labels=c("-6M","-4M","-2M","0")
+  )
+```
+
+### Fertility Rate of the Top 5 Growth Countries on Average in High Population Countries (Over 10 Million)
+
+This plot highlights countries with the highest average population growth rates. While all of them remain above the replacement fertility rate, most — with the exception of Niger — are experiencing a rapid decline in growth. This trend suggests that even the fastest-growing populations are beginning to slow, potentially signaling broader global demographic shifts ahead.
+
+```{r}
+ggplot(df_top_5_h, aes(x=Year,
+                       y=`Fertility rate, total (births per woman)`,
+                       col=`Country Name`)) +
+  geom_line(alpha=.6,
+            linewidth = 1.25,
+            na.rm=TRUE) +
+  geom_hline(yintercept = 2.1, 
+             color = "black", 
+             linetype = "dashed", 
+             linewidth = 1) +
+  labs(
+    title="Fertility Rate Over Time",
+    subtitle="Top 5 Average Population Growth Countries, High Pop"
+  ) +
+  theme_economist() +
+  theme(
+    legend.title=element_blank(),
+    legend.text=element_text(size=12),
+    axis.title.y = element_text(margin = margin(r = 10))
+  )
+```
+
+### Fertility Rate of the Top 5 GDP Countries on Average for the last 20 Years
+
+Another useful lens for examining demographic trends is by looking at the top economies by Gross Domestic Product (GDP). This chart highlights the five countries with the highest average GDP over the past 20 years. Population dynamics are closely tied to economic output, and it's reasonable to expect that declining populations may place downward pressure on GDP in the long term — both within these countries and across the global economy.
+
+```{r}
+ggplot(df_top_5_gdp_20, aes(x=Year,
+                            y=`Fertility rate, total (births per woman)`,
+                            col=`Country Name`)) +
+  geom_line(alpha=.6,
+            linewidth = 1.25,
+            na.rm=TRUE) +
+  geom_hline(yintercept = 2.1,
+             color = "black", 
+             linetype = "dashed", 
+             linewidth = 1) +
+  labs(
+    title="Fertility Rate Over TIme",
+    subtitle="Top 5 Average GDP, Previous 20 Years"
+  ) +
+  theme_economist() +
+  theme(
+    legend.title=element_blank(),
+    legend.text=element_text(size=12),
+    axis.title.y = element_text(margin = margin(r = 10))
+  )
+```
+
+In this plot, we begin to observe population levels stabilizing roughly one generation—about 20 to 30 years—after a country drops below the replacement fertility threshold.
+
+```{r}
+ggplot(df_top_5_gdp_20, aes(x=Year,
+                            y=`Population, total`,
+                            col=`Country Name`)) +
+  geom_line(alpha=.6,
+            linewidth = 1.25,
+            na.rm=TRUE) +
+  labs(
+    title="Population Over Time",
+    subtitle="Top 5 Average GDP, Previous 20 Years"
+  ) +
+  theme_economist() +
+  theme(
+    legend.title=element_blank(),
+    legend.text=element_text(size=12),
+    axis.title.y = element_text(margin = margin(r = 10))
+  ) +
+  scale_y_continuous(
+    breaks=c(0,5e8,1e9),
+    labels=c("0","500M","1B")
+  )
+```
+
+As seen in this plot, some countries are already beginning to show signs of GDP leveling off — most notably China and Japan. In contrast, the United States continues to experience GDP growth. This raises an important question: what factors are allowing the U.S. economy to keep expanding despite similar demographic trends?
+
+```{r}
+ggplot(df_top_5_gdp_20, aes(x=Year,
+                            y=`GDP (current US$)`,
+                            col=`Country Name`)) +
+  geom_line(alpha=.6,
+            linewidth = 1.25,
+            na.rm=TRUE) +
+  labs(
+    title="GDP of Top 5 GDP Countries",
+    subtitle="Top 5 Average GDP, Previous 20 Years"
+  ) +
+  theme_economist() +
+  theme(
+    legend.title=element_blank(),
+    legend.text=element_text(size=12),
+    axis.title.y = element_text(margin = margin(r = 10))
+  ) +
+  scale_y_continuous(
+    breaks=c(0,1e13,2e13),
+    labels=c("0","10T","20T")
+  )
+```
+
+Since 1990, the United States has seen well over one million — and in some years, nearly two million — net population gains from immigration alone. While immigration isn’t the whole story, factors such as labor productivity, capital accumulation, and technological advancement also play critical roles in sustaining economic growth. Still, the data makes it clear: immigration is a key contributor to maintaining a healthy, expanding economy and deserves serious attention in long-term economic planning.
+
+```{r}
+ggplot(df_top_5_gdp_20, aes(x=Year,
+                            y=`Net migration`,
+                            col=`Country Name`)) +
+  geom_line(alpha=.6,
+            linewidth = 1.25,
+            na.rm=TRUE) +
+  labs(
+    title="Net Migration of Top 5 GDP Countries",
+    subtitle="Top 5 Average GDP, Previous 20 Years"
+  ) +
+  theme_economist() +
+  theme(
+    legend.title=element_blank(),
+    legend.text=element_text(size=12),
+    axis.title.y = element_text(margin = margin(r = 10))
+  ) +
+  scale_y_continuous(
+    breaks=c(-1e6,0,1e6,2e6),
+    labels=c("-1M","0","1M","2M")
+  )
+```
+
+# Summary
+
+The demographic trends unfolding around the world today will shape global dynamics for decades to come. Once a country falls below the replacement fertility rate of 2.1 for an extended period—typically a generation—its population decline becomes extremely difficult, if not impossible, to reverse. While this shift may carry unforeseen benefits, it also challenges long-standing economic assumptions, particularly the viability of perpetual economic growth driven by population expansion alone.
+
+In this project, I used data from the World Bank to explore how various factors influence population growth and overall population levels. I created targeted data slices to isolate different groups of countries and, when possible, contextualized unusual trends using knowledge of historical and geopolitical events.
+
+One key takeaway from my analysis is that population trends are deeply influenced by the actions of previous generations. For example, several plots show that when a country drops below the replacement fertility rate for a generation, the growth rate of the following generation declines—ultimately leading to a reduction in overall population. Another important point to emphasize is the role of net immigration. While net immigration has clearly supported population growth in countries like Germany and the United States, it’s important to recognize that this is a zero-sum dynamic. For one country to benefit from incoming migrants, others must lose population. This means that immigration alone is not a sustainable long-term solution to most countries’ demographic challenges.
+
+There are, of course, limitations to this analysis. Demographics is a vast field, and time constraints prevented deeper exploration of several promising threads. For example, the impact of arable land, population density, and land usability on growth would be valuable areas for further research. Additionally, incorporating age distribution data would provide clearer insight into future growth potential—since countries with younger populations are often better positioned for continued demographic expansion.
+
+My hope is that this project has helped provide a clearer understanding of the variables that influence a country’s population dynamics, and how deeply those variables are shaped by policy decisions, economic conditions, and global events. A thoughtful grasp of demographic change is essential for sound policymaking, long-term economic planning, and anticipating future geopolitical shifts in our modern world.
