@@ -29,4 +29,4 @@ I was able to use R to read in many different csv's and create a dataframe to co
 
 ###### Plot examples
 ![fertility](snips/fertility.png)
-![migration](snips/net-migration.png)
+![migration](snips/net_migration.png)
